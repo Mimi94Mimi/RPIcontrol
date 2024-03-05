@@ -24,7 +24,7 @@ SOFTWARE.
 import dbus
 import threading
 import sys
-import lirc
+#import lirc
 from os import system
 
 from advertisement import Advertisement
@@ -100,7 +100,8 @@ class ModeCharacteristic(Characteristic):
         # self.add_descriptor(UnitDescriptor(self))
 
     def WriteValue(self, value, options):
-        val = str(value)
+        val = ''.join([str(v) for v in value])
+        print(f"'{val}' has been written")
         if(val == "fixed_angle"):
             print("Mode has changed to 'fixed_angle'.")
             self.service.set_mode(val)
@@ -121,7 +122,8 @@ class NumOfPhotosCharacteristic(Characteristic):
 
     def WriteValue(self, value, options):
         try:
-            val = int(str(value))
+            val = int(''.join([str(v) for v in value]))
+            print(f"'{val}' has been written")
             if(val < 1 or val > 200):
                 print("Number of photos should be in range 1-200.")
 
@@ -142,7 +144,8 @@ class TimeIntervalCharacteristic(Characteristic):
 
     def WriteValue(self, value, options):
         try:
-            val = float(str(value))
+            val = float(''.join([str(v) for v in value]))
+            print(f"'{val}' has been written")
             if(val < 0.2 or val > 20.0):
                 print("Time interval should be in range 0.2-20.0 .")
 
@@ -162,7 +165,8 @@ class AngleCharacteristic(Characteristic):
 
     def WriteValue(self, value, options):
         try:
-            val = int(str(value))
+            val = int(''.join([str(v) for v in value]))
+            print(f"'{val}' has been written")
             if(val < 1 or val > 45):
                 print("The angle should be in range 1-45.")
 
@@ -218,7 +222,8 @@ class CameraStateCharacteristic(Characteristic):
         return value
     
     def WriteValue(self, value, options):
-        val = str(value)
+        val = ''.join([str(v) for v in value])
+        print(f"'{val}' has been written")
         if(val == "idle"):
             print("Camera state has changed to 'idle'.")
             self.service.set_camera_state(val)
