@@ -86,6 +86,8 @@ class CameraService(Service):
         self.waitingHandler_th = threading.Timer(WAITING_HANDLER_CD, self.waitingHandler)
         self.waitingHandler_th.start()
         self.connectState = "waiting"
+        # DEBUG
+        self.light_color = "red"
 
         Service.__init__(self, index, self.CAMERA_SVC_UUID, True)
         self.add_characteristic(ModeCharacteristic(self))
@@ -180,7 +182,7 @@ class CameraService(Service):
             self.shooting_th.start()
         else:
             print("rotate the plate by 1 degree.")
-            system('irsend SEND_ONCE light KEY_1')
+            self.change_light_color()
             self.shooting_th = threading.Timer(ROT1DEG_CD, self.shooting_fixed_angle, [photo_cnt, angle_cnt+1])
             self.shooting_th.start()
 
@@ -227,6 +229,14 @@ class CameraService(Service):
         self.lastConnected = self.connected
         self.waitingHandler_th = threading.Timer(WAITING_HANDLER_CD, self.waitingHandler)
         self.waitingHandler_th.start()
+
+    def change_light_color(self):
+        if self.light_color == "green":
+            system('irsend SEND_ONCE light KEY_2')
+            self.light_color = "red"
+        elif self.light_color == "red":
+            system('irsend SEND_ONCE light KEY_1')
+            self.light_color = "green"
 
     def cancel_threads(self):
         try:
