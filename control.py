@@ -38,6 +38,7 @@ NOTIFY_TIMEOUT = 50
 DELAY_DETECT_MANUAL_SHUTDOWN = 1.0
 CONNECT_COUNTER_INTERVAL = 0.1
 
+# initial characteristic values
 MODE = "fixed_angle"
 NUM_OF_PHOTOS = 5
 TIME_INTERVAL = 1.5
@@ -45,21 +46,14 @@ ANGLE = 3
 CAMERA_STATE = "idle"
 SHOULD_TAKE_PHOTO = "false"
 CONNECTED = 0
+
+# constants
 COUNT_DOWN_TIME = 3
 POSTPONE_TH_CD = 0.3
 START_ROTATING_CD = 2.0
 STOP_ROTATING_CD = 2.0
 ROT1DEG_CD = 1.0
 WAITING_HANDLER_CD = 0.3
-
-# time_interval = 10.0  # default
-# app_running = False
-# app_shutdown = False
-# is_shooting_multi_photos = False
-# camera_shooting = False
-# photos_left = 0
-# should_take_photo = False
-
 
 class CameraAdvertisement(Advertisement):
     def __init__(self, index):
@@ -80,13 +74,15 @@ class CameraService(Service):
         self.should_take_photo = SHOULD_TAKE_PHOTO
         self.connected = CONNECTED
         self.lastConnected = CONNECTED
+        print("reset characteristics")
 
     def __init__(self, index):
         self.reset_characteristics()
         self.waitingHandler_th = threading.Timer(WAITING_HANDLER_CD, self.waitingHandler)
         self.waitingHandler_th.start()
         self.connectState = "waiting"
-        # DEBUG
+        self.connectTimeout_th = threading.Timer(10, self.reset_characteristics)
+        # test on light strip
         self.light_color = "red"
 
         Service.__init__(self, index, self.CAMERA_SVC_UUID, True)
@@ -118,7 +114,7 @@ class CameraService(Service):
         if val == "shooting":
             self.start_shooting()
         if val == "idle":
-            ...
+            self.cancel_shooting()
 
     def get_should_take_photo(self):
         return self.should_take_photo
@@ -131,15 +127,6 @@ class CameraService(Service):
 
     def set_connected(self, val):
         self.connected = val
-        if (val == "connected"):
-            print("central has connected.")
-            print("reset characteristics to default value.")
-            self.reset_characteristics()
-        if (val == "waiting"):
-            print("waiting to reconnect.")
-        if (val == "disconnected"):
-            print("central has disconnected.")
-
 
     def count_down(self, cd_time):
         if self.camera_state == "idle":
@@ -164,8 +151,21 @@ class CameraService(Service):
         self.cd_th = threading.Thread(target=self.count_down, args=(COUNT_DOWN_TIME,))
         self.cd_th.start()
 
+    def cancel_shooting(self):
+        try:
+            if self.cd_th is not None:
+                self.cd_th.cancel()
+        except AttributeError:
+            pass
+        try:
+            if self.shooting_th is not None:
+                self.shooting_th.cancel()
+        except AttributeError:
+            pass
+
     def shooting_fixed_angle(self, photo_cnt, angle_cnt):
         if self.camera_state == "idle":
+            print("stop shooting_fixed_angle")
             return 
         if self.connectState == "waiting":
             self.shooting_th = threading.Timer(POSTPONE_TH_CD, self.shooting_fixed_angle, [photo_cnt, angle_cnt])
@@ -182,12 +182,13 @@ class CameraService(Service):
             self.shooting_th.start()
         else:
             print("rotate the plate by 1 degree.")
-            self.change_light_color()
+            system('irsend SEND_ONCE pisel KEY_1')
             self.shooting_th = threading.Timer(ROT1DEG_CD, self.shooting_fixed_angle, [photo_cnt, angle_cnt+1])
             self.shooting_th.start()
 
     def shooting_fixed_time_interval(self, photo_cnt, state):
         if self.camera_state == "idle":
+            print("stop shooting_fixed_time_interval")
             return 
         if self.connectState == "waiting":
             self.shooting_th = threading.Timer(POSTPONE_TH_CD, self.shooting_fixed_time_interval, [photo_cnt, state])
@@ -195,7 +196,7 @@ class CameraService(Service):
             return
         if state == "start":
             print("start rotating...")
-            system('irsend SEND_ONCE light KEY_RESTART')
+            system('irsend SEND_ONCE pisel KEY_RESTART')
             self.shooting_th = threading.Timer(START_ROTATING_CD, self.shooting_fixed_time_interval, [photo_cnt, "normal"])
             self.shooting_th.start()
             return
@@ -205,7 +206,7 @@ class CameraService(Service):
             return
         if photo_cnt >= self.num_of_photos:
             print("stop rotating...")
-            system('irsend SEND_ONCE light KEY_STOP')
+            system('irsend SEND_ONCE pisel KEY_STOP')
             self.shooting_th = threading.Timer(STOP_ROTATING_CD, self.shooting_fixed_time_interval, [photo_cnt, "end"])
             self.shooting_th.start()
             return
@@ -220,22 +221,23 @@ class CameraService(Service):
     def waitingHandler(self):
         counter_diff = WAITING_HANDLER_CD * 10 - 1
         if (self.connectState == "connected" and self.connected - self.lastConnected < counter_diff):
-            #print("wait begin")
             print("waiting to reconnect...")
             self.connectState = "waiting"
-        if (self.connectState == "waiting" and self.connected - self.lastConnected >= counter_diff):
-            #print("wait end")
+            self.connectTimeout_th.start()
+        elif (self.connectState == "waiting" and self.connected - self.lastConnected >= counter_diff):
             self.connectState = "connected"
+            self.connectTimeout_th.cancel()
+            self.connectTimeout_th = threading.Timer(10, self.reset_characteristics)
         self.lastConnected = self.connected
         self.waitingHandler_th = threading.Timer(WAITING_HANDLER_CD, self.waitingHandler)
         self.waitingHandler_th.start()
 
     def change_light_color(self):
         if self.light_color == "green":
-            system('irsend SEND_ONCE light KEY_2')
+            system('irsend SEND_ONCE pisel KEY_2')
             self.light_color = "red"
         elif self.light_color == "red":
-            system('irsend SEND_ONCE light KEY_1')
+            system('irsend SEND_ONCE pisel KEY_1')
             self.light_color = "green"
 
     def cancel_threads(self):
@@ -254,6 +256,11 @@ class CameraService(Service):
                 self.waitingHandler_th.cancel()
         except AttributeError:
             pass
+        try:
+            if self.connectTimeout_th is not None:
+                self.connectTimeout_th.cancel()
+        except AttributeError:
+            pass
 
 class ModeCharacteristic(Characteristic):
     MODE_CHARACTERISTIC_UUID = "187f0001-44ad-4f56-bee4-23b6cac3fe46"
@@ -262,7 +269,6 @@ class ModeCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.MODE_CHARACTERISTIC_UUID,
                 ["write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
 
     def WriteValue(self, value, options):
         val = ''.join([str(v) for v in value])
@@ -283,7 +289,6 @@ class NumOfPhotosCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.NUMOFPHOTOS_CHARACTERISTIC_UUID,
                 ["write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
 
     def WriteValue(self, value, options):
         try:
@@ -307,7 +312,6 @@ class TimeIntervalCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.TIMEINTERVAL_CHARACTERISTIC_UUID,
                 ["write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
 
     def WriteValue(self, value, options):
         try:
@@ -328,7 +332,6 @@ class AngleCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.ANGLE_CHARACTERISTIC_UUID,
                 ["write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
 
     def WriteValue(self, value, options):
         try:
@@ -352,7 +355,6 @@ class CameraStateCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.CAMERA_STATE_CHARACTERISTIC_UUID,
                 ["notify", "read", "write"], service)
-        #self.add_descriptor(TakePhotoDescriptor(self))
 
     def get_camera_state(self):
         value = []
@@ -391,7 +393,6 @@ class CameraStateCharacteristic(Characteristic):
     
     def WriteValue(self, value, options):
         val = ''.join([str(v) for v in value])
-        # print(f"'{val}' has been written")
         if(val == "idle"):
             print("Camera state has changed to 'idle'.")
             self.service.set_camera_state(val)
@@ -410,7 +411,6 @@ class ShouldTakePhotoCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.SHOULDTAKEPHOTO_CHARACTERISTIC_UUID,
                 ["notify", "read", "write"], service)
-        #self.add_descriptor(TakePhotoDescriptor(self))
 
     def get_should_take_photo(self):
         value = []
@@ -449,12 +449,9 @@ class ShouldTakePhotoCharacteristic(Characteristic):
     
     def WriteValue(self, value, options):
         val = ''.join([str(v) for v in value])
-        # print(f"'{val}' has been written")
         if(val == "false"):
-            # print("should_take_photo has changed to 'false'.")
             self.service.set_should_take_photo("false")
         elif(val == "true"):
-            # print("should_take_photo has changed to 'true'.")
             self.service.set_should_take_photo("true")
         else:
             print("Invalid camera state input.")
@@ -466,7 +463,6 @@ class ConnectedCharacteristic(Characteristic):
         Characteristic.__init__(
                 self, self.CONNECTED_CHARACTERISTIC_UUID,
                 ["read", "write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
 
     def get_connected(self):
         value = []
@@ -493,166 +489,8 @@ class ConnectedCharacteristic(Characteristic):
         except:
             print("Invalid value.")
 
-"""class TakePhotoDescriptor(Descriptor):
-    TAKE_PHOTO_DESCRIPTOR_UUID = "0001"
-    TAKE_PHOTO_VALUE = "should take photo"
 
-    def __init__(self, characteristic):
-        Descriptor.__init__(
-                self, self.TAKE_PHOTO_DESCRIPTOR_UUID,
-                ["read"],
-                characteristic)
-
-    def ReadValue(self, options):
-        value = []
-        desc = self.TAKE_PHOTO_VALUE
-
-        for c in desc:
-            value.append(dbus.Byte(c.encode()))
-
-        return value"""
-
-"""class CameraShootingCharacteristic(Characteristic):
-    CAMERA_SHOOTING_CHARACTERISTIC_UUID = "187f0002-44ad-4f56-bee4-23b6cac3fe46"
-
-    def __init__(self, service):
-        Characteristic.__init__(
-                self, self.CAMERA_SHOOTING_CHARACTERISTIC_UUID,
-                ["write"], service)
-        # self.add_descriptor(UnitDescriptor(self))
-
-    def WriteValue(self, value, options):
-        val = str(value)
-        self.service.set_camera_shooting(val)
-        if(val == "false"):
-            print("a picture has taken.")"""
-
-"""class CameraShootingDescriptor(Descriptor):
-    CAMERA_SHOOTING_DESCRIPTOR_UUID = "0002"
-    CAMERA_SHOOTING_VALUE = "camera shooting"
-
-    def __init__(self, characteristic):
-        Descriptor.__init__(
-                self, self.CAMERA_SHOOTING_DESCRIPTOR_UUID,
-                ["read"],
-                characteristic)
-
-    def ReadValue(self, options):
-        value = []
-        desc = self.CAMERA_SHOOTING_VALUE
-
-        for c in desc:
-            value.append(dbus.Byte(c.encode()))
-
-        return value"""
-    
-# def shutdown():
-#     if not timer_update is None and timer_update.isRunning():
-#         timer_update.stop()
-#     if not timer_system is None and timer_system.isRunning():
-#         timer_system.stop()
-#     print('Shutdown system.')
-#     system("sudo shutdown -h now")
-    
-# def shot_event():
-#     global photos_left
-#     if(is_shooting_multi_photos and photos_left > 0):
-#         should_take_photo = True
-#         camera_shooting = True
-#         should_take_photo = False
-#         photos_left -= 1
-#         if(photos_left == 0):
-#             is_shooting_multi_photos = False
-
-# def event_loop():
-    
-#     global client
-#     global lock1
-#     global photos_left
-#     cmds = ['rot', 'trot', 'shot', 'stpshot']
-#     while(1):
-#         if(app_shutdown):
-#             return
-
-#         print("\
-#             COMMANDS:                                                                 /n\
-#             rot <degree>            rotate the plate by 1/45/90/180 degrees once      /n\
-#             trot                    continue or stop rotating                         /n\
-#             shot                    shot a photo once                                 /n\
-#             shot <n> <t>            shot n photos every t seconds                     /n\
-#             stpshot                 stop shooting photos                              /n\
-#         ")
-
-#         input = input("Please enter any commands stated above:")
-#         cmd = input.split()[0] 
-#         args = input.split()[1:] if len(input.split()) > 1 else []
-#         if(cmd not in cmds):
-#             print("Invalid command.")
-#             continue
-
-#         if(cmd == 'rot'):
-#             try:
-#                 degree = int(args[0])
-#             except ValueError:
-#                 print("Invalid degree data type.")
-#                 continue
-#             else:
-#                 if degree not in [1, 45, 90, 180]:
-#                     print("Invalid angle (1/45/90/180 only).")
-#                     continue
-#                 #  rotate
-#                 if degree == 1:
-#                     # client.send_once("rotplate", "")
-#                     ...
-#                 elif degree == 45:
-#                     # client.send_once("rotplate", "")
-#                     ...
-#                 elif degree == 90:
-#                     # client.send_once("rotplate", "")
-#                     ...
-#                 elif degree == 180: 
-#                     # client.send_once("rotplate", "")
-#                     ... 
-
-#         if(cmd == 'trot'):
-#             # continue or stop rotate
-#             # client.send_once("rotplate", "")
-#             ...
-
-#         if(cmd == 'shot'):
-#             if(not args):  
-#                 # shot once
-#                 if(is_shooting_multi_photos):
-#                     print('Please stop current shooting task with "stpshot" command.')
-#                     continue
-#                 should_take_photo = True
-#                 should_take_photo = False
-#             else:
-#                 try:
-#                     num_of_photos, time_interval = int(args[0]), float(args[1])
-#                 except ValueError:
-#                     print("Invalid argument data type.")
-#                     continue
-#                 else:
-#                     if(is_shooting_multi_photos):
-#                         print('Please stop current shooting task with "stpshot" command.')
-#                         continue
-#                     if time_interval < 0.1 or time_interval > 20:
-#                         print('Time interval should be in range 0.1 ~ 20')
-#                         continue
-#                     else:
-#                         #  shot n photos
-#                         lock1.acquire()
-#                         is_shooting_multi_photos = True
-#                         timer_update.set_interval(time_interval)
-#                         photos_left = num_of_photos
-#                         lock1.release()
-
-#         if(cmd == 'stpshot'):
-#             if(is_shooting_multi_photos):
-#                 is_shooting_multi_photos = False
-#                 photos_left = 0
-
+# start advertisement
 app = Application()
 app.add_service(CameraService(0))
 app.register()
@@ -660,20 +498,10 @@ app.register()
 adv = CameraAdvertisement(0)
 adv.register()
 
-# timer_update = RepeatedTimer(time_interval, shot_event)
-# timer_system = RepeatedTimer(DELAY_DETECT_MANUAL_SHUTDOWN, shutdown)
-
-# client = lirc.Client()
-# lock1 = threading.Lock()
-# th = threading.Thread(target = event_loop)
-
 try:
     app_running = True
     app.run()
 
 except KeyboardInterrupt:
-    # app_running = False
-    # app_shutdown = True
-    # th.join()
     app.services[0].cancel_threads()
     app.quit()
