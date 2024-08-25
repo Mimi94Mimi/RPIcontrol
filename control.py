@@ -41,7 +41,7 @@ CONNECT_COUNTER_INTERVAL = 0.1
 # initial characteristic values
 MODE = "fixed_angle"
 NUM_OF_PHOTOS = 5
-TIME_INTERVAL = 1.5
+TIME_INTERVAL = 2.0
 ANGLE = 3
 CAMERA_STATE = "idle"
 SHOULD_TAKE_PHOTO = "false"
@@ -53,7 +53,7 @@ POSTPONE_TH_CD = 0.3
 START_ROTATING_CD = 2.0
 STOP_ROTATING_CD = 2.0
 ROT1DEG_CD = 1.0
-WAITING_HANDLER_CD = 0.3
+WAITING_HANDLER_CD = 2
 
 class CameraAdvertisement(Advertisement):
     def __init__(self, index):
@@ -133,6 +133,7 @@ class CameraService(Service):
             return
         if self.connectState == "waiting":
             self.cd_th = threading.Timer(POSTPONE_TH_CD, self.count_down, [cd_time])
+            print("wait count down")
             self.cd_th.start()
             return
         if cd_time > 0:
@@ -219,7 +220,7 @@ class CameraService(Service):
         self.shooting_th.start()
 
     def waitingHandler(self):
-        counter_diff = WAITING_HANDLER_CD * 10 - 1
+        counter_diff = WAITING_HANDLER_CD / 0.4 - 1
         if (self.connectState == "connected" and self.connected - self.lastConnected < counter_diff):
             print("waiting to reconnect...")
             self.connectState = "waiting"
@@ -239,6 +240,9 @@ class CameraService(Service):
         elif self.light_color == "red":
             system('irsend SEND_ONCE pisel KEY_1')
             self.light_color = "green"
+
+    def notify_disconnection(self):
+        self.set_connected(-1)
 
     def cancel_threads(self):
         try:
@@ -261,6 +265,10 @@ class CameraService(Service):
                 self.connectTimeout_th.cancel()
         except AttributeError:
             pass
+
+    def will_app_close(self):
+        self.notify_disconnection()
+        self.cancel_threads()
 
 class ModeCharacteristic(Characteristic):
     MODE_CHARACTERISTIC_UUID = "187f0001-44ad-4f56-bee4-23b6cac3fe46"
@@ -317,7 +325,7 @@ class TimeIntervalCharacteristic(Characteristic):
         try:
             val = float(''.join([str(v) for v in value]))
             print(f"'{val}' has been written")
-            if(val < 0.2 or val > 20.0):
+            if(val < 2.0 or val > 20.0):
                 print("Time interval should be in range 0.2-20.0 .")
 
             self.service.set_time_interval(val)
@@ -423,6 +431,7 @@ class ShouldTakePhotoCharacteristic(Characteristic):
         return value
 
     def set_should_take_photo_callback(self):
+        # print("set_should_take_photo_callback")
         if self.notifying:
             value = self.get_should_take_photo()
             self.PropertiesChanged(GATT_CHRC_IFACE, {"Value": value}, [])
@@ -433,6 +442,7 @@ class ShouldTakePhotoCharacteristic(Characteristic):
         if self.notifying:
             return
 
+        # print("StartNotify")
         self.notifying = True
 
         value = self.get_should_take_photo()
@@ -460,19 +470,45 @@ class ConnectedCharacteristic(Characteristic):
     CONNECTED_CHARACTERISTIC_UUID = "187f0007-44ad-4f56-bee4-23b6cac3fe46"
 
     def __init__(self, service):
+        self.notifying = False
+
         Characteristic.__init__(
                 self, self.CONNECTED_CHARACTERISTIC_UUID,
-                ["read", "write"], service)
+                ["notify", "read", "write"], service)
 
     def get_connected(self):
         value = []
         connected = self.service.get_connected()
         data = connected
 
-        for c in data:
-            value.append(dbus.Byte(c.encode()))
+        try:
+            value = dbus.UInt32(data)
+            print(value)
+            print(type(value))
+        except Exception as e:
+            print(e)
 
         return value
+
+    def set_connected_callback(self):
+        if self.notifying:
+            value = self.get_connected()
+            self.PropertiesChanged(GATT_CHRC_IFACE, {"Value": value}, [])
+
+        return self.notifying
+
+    def StartNotify(self):
+        if self.notifying:
+            return
+
+        self.notifying = True
+
+        value = self.get_connected()
+        self.PropertiesChanged(GATT_CHRC_IFACE, {"Value": value}, [])
+        self.add_timeout(NOTIFY_TIMEOUT, self.set_connected_callback)
+
+    def StopNotify(self):
+        self.notifying = False
 
     def ReadValue(self, options):
         value = self.get_connected()
@@ -480,6 +516,7 @@ class ConnectedCharacteristic(Characteristic):
         return value
 
     def WriteValue(self, value, options):
+        #print("WriteValue")
         try:
             val = int(''.join([str(v) for v in value]))
             #print(f"{val} has been written")
@@ -503,5 +540,5 @@ try:
     app.run()
 
 except KeyboardInterrupt:
-    app.services[0].cancel_threads()
+    app.services[0].will_app_close()
     app.quit()
